@@ -1,0 +1,104 @@
+---
+title: "RF"
+output: html_notebook
+---
+
+```{r}
+set.seed(19980805)
+library(randomForest)
+library(gbm)
+library(xgboost)
+
+rdc_time <- read.csv("./rdc_time_v2_14.csv")
+mdate <- rdc_time[,1]
+dd <- rdc_time[, c(-1, -ncol(rdc_time))]
+
+# Split Data
+
+train_val_index <- round(0.9 * nrow(dd))
+train_index <- round(0.9 * train_val_index)
+
+test_date <- mdate[(train_val_index+1) : nrow(dd)]
+
+train_D <- dd[1 : train_index, ]
+val_D <- dd[(train_index+1) : train_val_index, ]
+test_D <- dd[(train_val_index+1) : nrow(dd), ]
+
+val_spindx <- val_D$spindx
+test_spindx <- test_D$spindx
+```
+
+# RF
+
+```{r}
+max_mtry <- ncol(dd) - 1
+MSE_min <- matrix(nrow = 1, ncol = max_mtry)
+for (mtry in 1:max_mtry) {
+  rf_MSE <- randomForest(spindx~.,data=train_D,mtry=mtry,ntree=700)
+  pred_MSE <- predict(rf_MSE,val_D)
+  MSE_min[mtry] <- mean((pred_MSE-val_spindx)^2)
+  cat(mtry, "\t")
+  cat(MSE_min, "\n")
+}
+```
+
+```{r}
+rf_bestfit <- randomForest(spindx~., data = rbind(train_D, val_D), mtry=which.min(MSE_min), ntree=400)
+
+pred_bestfit<-predict(rf_bestfit,test_D)
+
+MSE_bestfit<-mean((pred_bestfit-test_D$spindx)^2)
+print(MSE_bestfit)
+
+plot(1:nrow(test_D), test_spindx, col="red", type="l")
+lines(1:nrow(test_D), pred_bestfit, col="blue")
+```
+
+# GBDT
+
+```{r}
+gbdt_model <- gbm(spindx~., distribution = 'gaussian', data = rbind(train_D, val_D), n.trees = 5000, shrinkage = 0.01)
+
+best.iter <- gbm.perf(gbdt_model)
+summary.gbm(gbdt_model, best.iter)
+```
+
+```{r}
+gbdt_fit <- predict(gbdt_model, test_D, best.iter)
+
+MSE_gbdtfit<-mean((gbdt_fit-test_D$spindx)^2)
+print(MSE_gbdtfit)
+
+plot(1:nrow(test_D), test_spindx, col="red", type="l")
+lines(1:nrow(test_D), gbdt_fit, col="blue")
+```
+
+```{r}
+train_xg <- as.matrix(rbind(train_D, val_D))
+train_xg_data <- train_xg[, 1:(ncol(train_D)-1)]
+train_xg_label <- train_xg[, ncol(train_D)]
+
+test_xg <- as.matrix(test_D)
+test_xg_data <- test_xg[, 1:(ncol(test_D)-1)]
+
+xgb_1 <- xgboost(
+  data = train_xg_data,
+  label = train_xg_label,
+  nrounds = 1000,
+  eta = 0.1,
+  max_depth = 8,
+  objective = "reg:squarederror"
+)
+
+pred_xg_1 <- predict(xgb_1, test_xg_data)
+
+MSE_xgfit<-mean((pred_xg_1-test_D$spindx)^2)
+print(MSE_xgfit)
+
+plot(1:nrow(test_D), test_spindx, col="red", type="l")
+lines(1:nrow(test_D), pred_xg_1, col="blue")
+```
+```{r}
+xgb.plot.tree(model = xgb_1, trees = 0:3)
+```
+
