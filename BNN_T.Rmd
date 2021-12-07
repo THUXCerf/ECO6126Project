@@ -1,0 +1,246 @@
+---
+title: "BNN T"
+output: html_notebook
+---
+
+```{r}
+set.seed(19980805)
+library(neuralnet)
+library(brnn)
+library(ggplot2)
+library(dplyr)
+library(plot3D)
+library(plot3Drgl)
+library(tensorflow)
+library(keras)
+```
+
+# Data Normalization
+
+```{r}
+rdc_time <- read.csv("./rdc_time_v3_14.csv")
+rdc_time$mdate <- as.Date(rdc_time$mdate)
+mdate <- rdc_time[,1]
+dd <- rdc_time[, c(-1, -ncol(rdc_time))]
+
+# Normalization
+
+maxs <- apply(dd, 2, max)
+mins <- apply(dd, 2, min)
+spindx_scale <- max(dd$spindx) - min(dd$spindx)
+scaled_spindx <- as.data.frame(scale(dd, center = mins, scale = maxs - mins))
+
+# Split Data
+
+train_val_index <- round(0.9 * nrow(dd))
+train_index <- round(0.9 * train_val_index)
+
+test_date <- mdate[(train_val_index+1) : nrow(scaled_spindx)]
+
+train_D <- scaled_spindx[1 : train_index, ]
+val_D <- scaled_spindx[(train_index+1) : train_val_index, ]
+test_D <- scaled_spindx[(train_val_index+1) : nrow(scaled_spindx), ]
+
+val_spindx <- val_D$spindx * spindx_scale + min(dd$spindx)
+test_spindx <- test_D$spindx * spindx_scale + min(dd$spindx)
+```
+
+# MLP
+
+```{r}
+max_hidden_1 <- 30
+max_rep <- 5
+
+MSE.nn.val <- matrix(nrow = max_rep, ncol = max_hidden_1)
+pr.mlp <- array(dim = c(nrow(val_D), max_hidden_1, max_rep))
+
+for (rep in 1 : max_rep) {
+  for (h1 in 1 : max_hidden_1) {
+    mlp <- neuralnet(spindx ~ . , train_D, hidden = h1, linear.output = T, stepmax = 1e07, rep = rep)
+    pr.mlp[, h1, rep] <- predict(mlp, val_D) * spindx_scale + min(dd$spindx)
+  
+    MSE.mlp <- sum((pr.mlp[, h1, rep] - val_spindx)^2) / nrow(wal_D)
+    MSE.nn.val[rep, h1] <- MSE.mlp
+    }
+}
+```
+
+```{r}
+max_hidden_2 <- round(max_hidden_1 / 2) + 1
+
+MSE.nn.val.2 <- array(0, dim = c(max_hidden_2, max_hidden_1, max_rep))
+pr.mlp.2 <- array(0, dim = c(nrow(val_D), max_hidden_2, max_hidden_1, max_rep))
+
+for (rep in 1 : max_rep) {
+  for (h1 in 1 : max_hidden_1) {
+    for (h2 in 1 : (round(h1 / 2) + 1)) {
+      mlp <- neuralnet(spindx ~ . , train_D, hidden = c(h1, h2), linear.output = T, stepmax = 1e07, rep = rep)
+      pr.mlp.2[, h2, h1, rep] <- predict(mlp, val_D) * spindx_scale + min(dd$spindx)
+  
+      MSE.mlp <- sum((pr.mlp.2[, h2, h1, rep] - val_spindx)^2) / nrow(val_D)
+      MSE.nn.val.2[h2, h1, rep] <- MSE.mlp
+      }
+    }
+}
+```
+
+```{r}
+max_hidden_3 <- round(max_hidden_2 / 2) + 1
+
+MSE.nn.val.3 <- array(0, dim = c(max_hidden_3, max_hidden_2, max_hidden_1, max_rep))
+pr.mlp.3 <- array(0, dim = c(nrow(val_D), max_hidden_3, max_hidden_2, max_hidden_1, max_rep))
+
+for (rep in 1 : max_rep) {
+  for (h1 in 1 : max_hidden_1) {
+    for (h2 in 1 : (round(h1 / 2) + 1)) {
+      for (h3 in 1 : (round(h2 / 2) + 1)) {
+        mlp <- neuralnet(spindx ~ . , train_D, hidden = c(h1, h2, h3), linear.output = T, stepmax = 1e07, rep = rep)
+        pr.mlp.3[, h3, h2, h1, rep] <- predict(mlp, val_D) * spindx_scale + min(dd$spindx)
+  
+        MSE.mlp <- sum((pr.mlp.3[, h3, h2, h1, rep] - val_spindx)^2) / nrow(val_D)
+        MSE.nn.val.3[h3, h2, h1, rep] <- MSE.mlp
+        }
+      }
+    }
+}
+```
+
+```{r}
+print(min(MSE.nn.val))
+print(min(replace(MSE.nn.val.2, MSE.nn.val.2 == 0, max(MSE.nn.val.2) + 1)))
+print(min(replace(MSE.nn.val.3, MSE.nn.val.3 == 0, max(MSE.nn.val.3) + 1)))
+```
+
+```{r}
+min.loc.1 <- which(MSE.nn.val == min(MSE.nn.val), arr.ind = T)
+min.loc.2 <- which(MSE.nn.val.2 == min(replace(MSE.nn.val.2, MSE.nn.val.2 == 0, max(MSE.nn.val.2) + 1)), arr.ind = T)
+min.loc.3 <- which(MSE.nn.val.3 == min(replace(MSE.nn.val.3, MSE.nn.val.3 == 0, max(MSE.nn.val.3) + 1)), arr.ind = T)
+```
+
+```{r fig.width=21, fig.height=9}
+#pdf(file = "./MSE.nn.val.2.pdf", width = 10, height = 8, paper = "a4r")
+
+par(mfrow = c(2,3), mar = c(2,0.5,2,0.5), oma = c(1.5,1,2,1))
+
+for (rep.2 in 1 : 3) {
+  MSE.nn.val.2.rep <- reshape2::melt(MSE.nn.val.2[, , rep.2], c("h2", "h1"), value.name = "MSE.nn.val.2")
+  MSE.nn.val.2.rep$MSE.nn.val.2[which(MSE.nn.val.2.rep$MSE.nn.val.2 > 50000)] <- 0
+  
+  scatter3D(MSE.nn.val.2.rep$h2, MSE.nn.val.2.rep$h1, MSE.nn.val.2.rep$MSE.nn.val.2, 
+          colkey = F, bty = "b2", type= "h", pch = 20, cex = 1,
+          theta = 20, phi = 30, col = gg2.col(100),
+          main = paste("rep =", rep.2), xlab = "2nd H", ylab = "1st H", zlab = "MSE"
+          )
+}
+
+for (rep.2 in 4 : max_rep) {
+  MSE.nn.val.2.rep <- reshape2::melt(MSE.nn.val.2[, , rep.2], c("h2", "h1"), value.name = "MSE.nn.val.2")
+  MSE.nn.val.2.rep$MSE.nn.val.2[which(MSE.nn.val.2.rep$MSE.nn.val.2 > 50000)] <- 0
+  
+  scatter3D(MSE.nn.val.2.rep$h2, MSE.nn.val.2.rep$h1, MSE.nn.val.2.rep$MSE.nn.val.2, 
+          colkey = F, bty = "b2", type= "h", pch = 20, cex = 1,
+          theta = 20, phi = 90, col = gg2.col(100),
+          main = paste("rep =", rep.2), xlab = "2nd H", ylab = "1st H", zlab = "MSE"
+          )
+}
+
+title("validation MSE for 2 Hidden Layer Network", outer = T, line = 0.5)
+
+#dev.off()
+```
+
+```{r fig.width = 60, fig.height = 30, fig.align = 'center'}
+pr.mlp.best <- matrix(nrow = 3,ncol = nrow(test_D))
+MSE.nn.best <- c()
+
+best_mlp_1 <- neuralnet(spindx ~ ., rbind(train_D,val_D), hidden = 10, linear.output = T, stepmax = 1e07, rep = 2)
+pr.mlp.best[1, ] <- predict(best_mlp_1, test_D) * spindx_scale + min(dd$spindx)
+MSE.nn.best[1] <- sum((pr.mlp.3[, h3, h2, h1, rep] - test_spindx)^2) / nrow(test_D)
+
+best_mlp_2 <- neuralnet(spindx ~ ., rbind(train_D,val_D), hidden = c(23,11), linear.output = T, stepmax = 1e07, rep = 5)
+pr.mlp.best[2, ] <- predict(best_mlp_1, test_D) * spindx_scale + min(dd$spindx)
+MSE.nn.best[2] <- sum((pr.mlp.3[, h3, h2, h1, rep] - test_spindx)^2) / nrow(test_D)
+
+best_mlp_3 <- neuralnet(spindx ~ ., rbind(train_D,val_D), hidden = c(29,15,1), linear.output = T, stepmax = 1e07, rep = 1)
+pr.mlp.best[3, ] <- predict(best_mlp_1, test_D) * spindx_scale + min(dd$spindx)
+MSE.nn.best[3] <- sum((pr.mlp.3[, h3, h2, h1, rep] - test_spindx)^2) / nrow(test_D)
+
+plot(best_mlp_1, rep = 2, radius = 0.1, arrow.length = 0.1, col.entry.synapse = "blue", col.entry = "blue", col.out = "red", col.out.synapse = "red", col.intercept = "orange", dimension = 5)
+plot(best_mlp_2, rep = 5, radius = 0.1, arrow.length = 0.1, col.entry.synapse = "blue", col.entry = "blue", col.out = "red", col.out.synapse = "red", col.intercept = "orange", dimension = 5)
+plot(best_mlp_3, rep = 1, radius = 0.1, arrow.length = 0.1, col.entry.synapse = "blue", col.entry = "blue", col.out = "red", col.out.synapse = "red", col.intercept = "orange", dimension = 5)
+```
+
+```{r fig.width = 21, fig.height = 9, fig.align = 'center'}
+pdf(file = "./nn_pred.pdf", width = 10, height = 6, paper = "a4r")
+
+ggplot() +
+  geom_line(aes(test_date, test_spindx, colour = "Origin"), alpha = 0.7, size = 1)+
+  geom_line(aes(test_date, pr.mlp.best[3, ], colour = "3 Hidden L"), alpha = 0.9, size = 1)+
+  geom_line(aes(test_date, pr.mlp.best[2, ], colour = "2 Hidden L"), alpha = 0.8, size = 1)+
+  geom_line(aes(test_date, pr.mlp.best[1, ], colour = "1 Hidden L"), alpha = 0.8, size = 1)+
+  ggtitle(label = "Plots of Actual S&P 500 Index and Predictions on Various Layers of Neural Networks")+
+  theme(plot.title = element_text(hjust = 0.5), 
+        plot.background = element_rect(fill = 'transparent', colour = 'white'))+
+  xlab(label = "Date") + ylab(label = "S&P 500 Index")+
+  scale_colour_manual(name = "Pred", values = c("#77BE5A", "#E76F32", "#87AECB", "red"))+
+  guides(colour = guide_legend())
+
+dev.off()
+```
+
+# BNN
+
+```{r}
+max_hidden_brnn_val_2 <- 20
+max_rep <- 10
+
+MSE.brnn_val <- matrix(nrow = max_rep, ncol = max_hidden_brnn_val_2)
+pr.brnn_val <- array(dim = c(nrow(val_D), max_hidden_brnn_val_2, max_rep))
+
+for (rep in 1 : max_rep) {
+  for (hid in 1 : max_hidden_brnn_val_2) {
+    rdc_brnn_val <- brnn(spindx ~ ., train_D, neurons = hid, cores = 4, mu = 0.001, change = 0.0008, verbose = F, Monte_Carlo = F)
+    pr.brnn_val[,hid,rep] <- predict(rdc_brnn_val, val_D) * spindx_scale + min(dd$spindx)
+    
+    MSE.brnn_val[rep, hid] <- mean((pr.brnn_val[,hid,rep] - val_spindx)^2)
+  }
+}
+
+min.loc_val <- which.min(colMeans(MSE.brnn_val))
+```
+
+```{r}
+pr.brnn_t <- matrix(nrow = nrow(test_D), ncol = max_rep)
+
+for (rep in 1 : max_rep) {
+  rdc_brnn_t <- brnn(spindx ~., rbind(train_D, val_D), neurons = min.loc_val, cores = 4, mu = 0.001, change = 0.0008, verbose = F, Monte_Carlo = T, samples = 10)
+  pr.brnn_t[, rep] <- predict(rdc_brnn_t, test_D) * spindx_scale + min(dd$spindx)
+}
+
+pr.bnn <- matrix(nrow = nrow(test_D), ncol = 2)
+
+pr.bnn[,1] <- rowMeans(pr.brnn_t)
+pr.bnn[,2] <- apply(pr.brnn_t, 1, sd, na.rm = T)
+
+MSE.bnn <- mean((pr.bnn[,1] - test_spindx)^2)
+MSE.bnn %>% print()
+```
+
+```{r fig.width = 21, fig.height = 9, fig.align = 'center'}
+pdf(file = "./bnn_pred.pdf", width = 10, height = 6, paper = "a4r")
+
+ggplot() +
+  geom_line(aes(test_date, test_spindx, colour = "Origin"), alpha = 0.7, size = 0.8)+
+  geom_line(aes(test_date, pr.bnn[,1], colour = "BNN"), alpha = 1, size = 0.8)+
+  geom_ribbon(aes(test_date, ymin = pr.bnn[,1] - 1.96 * pr.bnn[,2], ymax = pr.bnn[,1] + 1.96 * pr.bnn[,2]), alpha = 0.18)+
+  geom_line(aes(test_date, y = pr.bnn[,1] - 1.96 * pr.bnn[,2]), colour = "purple", linetype = "dashed", alpha = 0.3)+
+  geom_line(aes(test_date, y = pr.bnn[,1] + 1.96 * pr.bnn[,2]), colour = "purple", linetype = "dashed", alpha = 0.3)+
+  ggtitle(label = "Plots of Actual S&P 500 Index and Predictions on Bayesian Neural Networks")+
+  theme(plot.title = element_text(hjust = 0.5), 
+        plot.background = element_rect(fill = 'transparent', colour = 'white'))+
+  xlab(label = "Year") + ylab(label = "S&P 500 Index")+
+  scale_colour_manual(name = "Pred", values = c("#87AECB", "red"))+
+  guides(colour = guide_legend())
+
+dev.off()
+```

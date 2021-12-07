@@ -1,0 +1,64 @@
+---
+title: "LASSO SELECT"
+output: html_notebook
+---
+
+```{r}
+set.seed(19990809)
+library(glmnet)
+library(ggcorrplot)
+rdc_time <- read.csv("./rdc_time_v2_14.csv")
+rdc_time$mdate <- as.Date(sub("$", "-20", rdc_time$mdate))
+
+rdc_lasso <- rdc_time[, c(-1, -ncol(rdc_time))]
+
+index <- round(0.9 * nrow(rdc_lasso))
+
+train_lasso <- rdc_lasso[1 : index, ]
+test_lasso <- rdc_lasso[(index+1) : nrow(rdc_lasso), ]
+```
+
+```{r fig.width=7,fig.height=7}
+pdf(file = "./corr_plot.pdf", width = 10, height = 8, paper = "a4r")
+
+correlation.matrix = cor(rdc_lasso)
+ggcorrplot(correlation.matrix, colors = c("#6D9EC1", "white", "#E46726"), 
+           tl.cex = 8, outline.color = "white", legend.title = "Correlation") + 
+  theme(legend.position="right", legend.direction = "vertical", 
+        plot.margin = margin(0,0,0,0,"pt"), legend.text=element_text(size=8), 
+        legend.title=element_text(size=8))
+
+dev.off()
+```
+
+```{r}
+grid <- 10^seq(10, -2, length=100)
+
+lasso.mod <- glmnet(as.matrix(train_lasso[, 1 : ncol(train_lasso) - 1]), train_lasso$spindx, alpha = 1, lambda = grid)
+
+cv.out <- cv.glmnet(as.matrix(train_lasso[, 1 : ncol(train_lasso) - 1]), train_lasso$spindx, alpha=1)
+
+bestlam <- cv.out$lambda.min
+bestlam_1se <- cv.out$lambda.1se
+
+lasso.pred <- predict(lasso.mod, s = bestlam, 
+                      newx = as.matrix(test_lasso[, 1 : ncol(test_lasso) - 1]), unique = T)
+lasso.pred_1se <- predict(lasso.mod, s = bestlam_1se, 
+                          newx = as.matrix(test_lasso[, 1 : ncol(test_lasso) - 1]), unique = T)
+
+mean((lasso.pred-test_lasso$spindx)^2)
+
+out <- glmnet(as.matrix(rdc_lasso[, 1 : ncol(rdc_lasso) - 1]), rdc_lasso$spindx, alpha = 1, lambda = grid)
+lasso.coef <- predict(out, type = "coefficients", s = bestlam)[1 : 48, ]
+lasso_coef_del <- as.matrix(lasso.coef[lasso.coef == 0])
+```
+```{r}
+lasso_coef_del <- rownames(lasso_coef_del)
+for (i in 1:length(lasso_coef_del)) {
+  del_num <- which(colnames(rdc_time) == lasso_coef_del[i])
+  rdc_time <- rdc_time[, -del_num]
+}
+
+write.table(rdc_time, "./rdc_time.csv", sep=",", row.names = F)
+```
+

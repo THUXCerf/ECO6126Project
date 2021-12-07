@@ -1,0 +1,56 @@
+---
+title: "Data Processing"
+output: html_notebook
+---
+```{r include=FALSE}
+library(dplyr)
+df_input <- read.csv("~/Downloads/X_DataPro/characteristics_data_feb2017.csv")
+```
+
+```{r}
+attach(df_input)
+df_sorted <- df_input[order(yy,mm),]
+detach(df_input)
+remove(df_input)
+
+del <- subset(df_sorted, date < "1963-07-31")
+df_sorted <- anti_join(df_sorted, del)
+df_sorted <- df_sorted[,-1]
+df_sorted$prc <- abs(df_sorted$prc)
+
+dindex <- unique(df_sorted[,1:2])
+mdate <- unique(df_sorted$date)
+no_perm <- unique(df_sorted$permno)
+
+rdc_time <- matrix(nrow = nrow(dindex),ncol = ncol(df_sorted)+3)
+colnames(rdc_time) <- c("mdate", colnames(df_sorted[,5:ncol(df_sorted)]), 
+                        "log_prc", "log_q10", "log_q20", "log_q50", "log_lme", "log_at")
+
+for (k in 1:nrow(dindex)) {
+  ksub <- subset(df_sorted, yy == dindex[k,1] & mm == dindex[k,2])
+  weights <- as.matrix(ksub$lme / sum(ksub$lme))
+  ksub <- cbind(ksub, log10(ksub$prc), log10(ksub$q10), log10(ksub$q20), 
+                  log10(ksub$q50), log10(ksub$lme), log10(ksub$at))
+  rdc_time[k,1] <- mdate[k]
+  rdc_time[k,2:ncol(rdc_time)] <- t(weights) %*% as.matrix(ksub[,5:ncol(ksub)])
+  print(mdate[k])
+}
+
+rdc_time <- as.data.frame(rdc_time)
+rdc_time$mdate <- sub("-[0-9][0-9]$", "", rdc_time$mdate)
+
+sp500 <- read.csv("./SP500.csv")
+sp500$caldt <- sub("/", "-", sp500$caldt)
+sp500$caldt <- gsub("/[0-9][0-9]", "", sp500$caldt)
+
+sp500_selected <- sp500[which(sp500$caldt == min(rdc_time$mdate)) : 
+                          which(sp500$caldt == max(rdc_time$mdate)), ]
+rdc_time <- cbind(rdc_time, sp500_selected$spindx, sp500_selected$sprtrn)
+
+colnames(rdc_time)[(ncol(rdc_time)-1):ncol(rdc_time)] <- c("spindx", "sprtrn")
+
+write.table(rdc_time, "./rdc_time.csv", sep=",", row.names = F)
+write.table(no_perm, "./permno.txt", sep="\n", row.names = F)
+```
+
+
