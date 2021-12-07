@@ -106,12 +106,6 @@ for (rep in 1 : max_rep) {
 ```
 
 ```{r}
-print(min(MSE.nn.val))
-print(min(replace(MSE.nn.val.2, MSE.nn.val.2 == 0, max(MSE.nn.val.2) + 1)))
-print(min(replace(MSE.nn.val.3, MSE.nn.val.3 == 0, max(MSE.nn.val.3) + 1)))
-```
-
-```{r}
 min.loc.1 <- which(MSE.nn.val == min(MSE.nn.val), arr.ind = T)
 min.loc.2 <- which(MSE.nn.val.2 == min(replace(MSE.nn.val.2, MSE.nn.val.2 == 0, max(MSE.nn.val.2) + 1)), arr.ind = T)
 min.loc.3 <- which(MSE.nn.val.3 == min(replace(MSE.nn.val.3, MSE.nn.val.3 == 0, max(MSE.nn.val.3) + 1)), arr.ind = T)
